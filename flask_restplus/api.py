@@ -25,7 +25,10 @@ from flask.signals import got_request_exception
 
 from jsonschema import RefResolver
 
-from werkzeug import cached_property
+try:
+    from werkzeug.utils import cached_property
+except ImportError:
+    from werkzeug import cached_property
 from werkzeug.datastructures import Headers
 from werkzeug.exceptions import HTTPException, MethodNotAllowed, NotFound, NotAcceptable, InternalServerError
 from werkzeug.wrappers import BaseResponse
@@ -34,7 +37,6 @@ from . import apidoc
 from .mask import ParseError, MaskError
 from .namespace import Namespace
 from .postman import PostmanCollectionV1
-from .resource import Resource
 from .swagger import Swagger
 from .utils import default_id, camel_to_dash, unpack
 from .representations import output_json
@@ -120,6 +122,7 @@ class Api(object):
         self._doc_view = None
         self._default_error_handler = None
         self.tags = tags or []
+        self._spec_view = partial(apidoc.specs_for, self)
 
         self.error_handlers = {
             ParseError: mask_parse_error_handler,
@@ -245,16 +248,7 @@ class Api(object):
 
     def _register_specs(self, app_or_blueprint):
         if self._add_specs:
-            endpoint = str('specs')
-            self._register_view(
-                app_or_blueprint,
-                SwaggerView,
-                self.default_namespace,
-                '/swagger.json',
-                endpoint=endpoint,
-                resource_class_args=(self, )
-            )
-            self.endpoints.add(endpoint)
+            app_or_blueprint.add_url_rule('/swagger.json', 'specs', self.render_spec)
 
     def _register_doc(self, app_or_blueprint):
         if self._add_specs and self._doc:
@@ -376,6 +370,11 @@ class Api(object):
         self._doc_view = func
         return func
 
+    def specs(self, func):
+        '''A decorator to specify a view function for the specs'''
+        self._spec_view = func
+        return func
+
     def render_root(self):
         self.abort(HTTPStatus.NOT_FOUND)
 
@@ -386,6 +385,13 @@ class Api(object):
         elif not self._doc:
             self.abort(HTTPStatus.NOT_FOUND)
         return apidoc.ui_for(self)
+
+    def render_spec(self):
+        if self._spec_view:
+            return self._spec_view()
+        elif not self.__schema__:
+            self.abort(HTTPStatus.NOT_FOUND)
+        return apidoc.specs_for(self)
 
     def default_endpoint(self, resource, namespace):
         '''
@@ -829,16 +835,6 @@ class Api(object):
         if self.blueprint:
             endpoint = '{0}.{1}'.format(self.blueprint.name, endpoint)
         return url_for(endpoint, **values)
-
-
-class SwaggerView(Resource):
-    '''Render the Swagger specifications as JSON'''
-    def get(self):
-        schema = self.api.__schema__
-        return schema, HTTPStatus.INTERNAL_SERVER_ERROR if 'error' in schema else HTTPStatus.OK
-
-    def mediatypes(self):
-        return ['application/json']
 
 
 def mask_parse_error_handler(error):

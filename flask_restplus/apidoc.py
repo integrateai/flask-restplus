@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
-from flask import url_for, Blueprint, render_template
+import json
+from flask import url_for, Blueprint, render_template, Response
 
 
 class Apidoc(Blueprint):
@@ -33,4 +34,11 @@ def swagger_static(filename):
 def ui_for(api):
     '''Render a SwaggerUI for a given API'''
     return render_template('swagger-ui.html', title=api.title,
-                           specs_url=api.specs_url)
+        specs_json=api.__schema__)
+
+
+def specs_for(api):
+    swagger_specs = json.dumps(api.__schema__, sort_keys=True, indent=4, separators=(',', ': '))
+    if 'error' in api.__schema__:
+        return Response(swagger_specs, status=500, mimetype='application/json')
+    return Response(swagger_specs, status=200, mimetype='application/json')
